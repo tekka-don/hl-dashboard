@@ -1,0 +1,547 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Hyperliquid 価格発見レポート（ライブ）</title>
+<style>
+  :root{
+    --bg:#eef1f4;
+    --card:#ffffff;
+    --ink:#1f2933;
+    --muted:#8a939e;
+    --line:#e6eaef;
+    --track:#e9edf1;
+    --green:#15a06a;
+    --green-soft:#e8f5ee;
+    --orange:#e0823c;
+    --orange-soft:#fbeede;
+    --shadow:0 1px 2px rgba(20,30,45,.04), 0 8px 28px rgba(20,30,45,.06);
+    --r:14px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,"Hiragino Kaku Gothic ProN","Noto Sans JP",
+      "Segoe UI",Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased;font-variant-numeric:tabular-nums;}
+  .num{font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
+  .pos{color:var(--green)}
+  .neg{color:var(--orange)}
+
+  .wrap{max-width:1200px;margin:24px auto;padding:0 16px}
+  .report{background:var(--card);border:1px solid var(--line);
+    border-radius:var(--r);box-shadow:var(--shadow);padding:30px 34px 26px}
+
+  /* live status / refresh bar */
+  .topbar{display:flex;align-items:center;gap:10px;margin:0 0 16px;flex-wrap:wrap}
+  .topbar button{padding:7px 16px;border:1px solid var(--green);border-radius:8px;
+    background:var(--green-soft);color:var(--green);font-weight:700;font-family:inherit;
+    font-size:13px;cursor:pointer}
+  .topbar button:disabled{opacity:.45;cursor:default}
+  .status{font-size:12px;color:var(--muted)}
+  .status.err{color:var(--orange);font-weight:600}
+
+  /* baseline preset tabs */
+  .tabs{display:flex;gap:8px;margin:0 0 18px;flex-wrap:wrap}
+  .tabs:empty{display:none}
+  .tab{padding:7px 14px;border:1px solid var(--line);border-radius:8px;background:#f7f9fb;
+    font-size:13px;color:var(--muted);cursor:pointer;font-weight:600;font-family:inherit}
+  .tab:hover{color:var(--ink)}
+  .tab.on{background:var(--green-soft);color:var(--green);border-color:var(--green)}
+
+  /* header */
+  h1{font-size:30px;font-weight:700;letter-spacing:.01em;margin:0 0 6px}
+  .sub{font-size:14px;color:var(--muted);margin:0 0 22px}
+  .sub b{color:var(--ink);font-weight:600}
+
+  /* summary cards */
+  .cards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px}
+  .cards .c.idx{grid-column:span 2}
+  .c{background:#f7f9fb;border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+  .c .label{font-size:12px;color:var(--muted);margin-bottom:6px}
+  .c .big{font-size:26px;font-weight:700;line-height:1}
+  .c .tag{font-size:11px;color:var(--muted);margin-left:6px;font-weight:500}
+  .c.idx .big{font-size:19px}
+
+  .note{background:#f4f6f9;border:1px solid var(--line);border-radius:8px;
+    font-size:12.5px;color:#586472;padding:9px 13px;margin-bottom:22px}
+  .note b{color:var(--ink);font-weight:600}
+
+  /* two-column */
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:26px}
+  .blk-h{display:flex;align-items:baseline;justify-content:space-between;margin:4px 0 10px}
+  .blk-h .t{font-size:18px;font-weight:700}
+  .blk-h .t .avg{margin-left:6px}  /* 色は .pos/.neg で付ける（cls() を必ず併用） */
+  .blk-h .hint{font-size:11.5px;color:var(--muted)}
+  .gap{margin-top:24px}
+
+  /* tables */
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  thead th{font-size:11.5px;color:var(--muted);font-weight:600;text-align:left;
+    padding:9px 8px;border-bottom:1px solid var(--line)}
+  tbody td{padding:9px 8px;border-bottom:1px solid #f0f3f6}
+  tbody tr:last-child td{border-bottom:none}
+  td.sym{font-weight:600}
+  td.r{text-align:right}
+  td.pct{text-align:right;font-weight:700}
+  .posbg tr:hover td,.megabg tr:hover td{background:#fbfcfd}
+  td.role{color:var(--muted);font-size:12px}
+
+  /* strength bar (diverging from center) */
+  .bar{position:relative;height:11px;background:var(--track);border-radius:6px;min-width:120px}
+  .bar i{position:absolute;top:0;height:100%;border-radius:6px}
+  .bar .mid{position:absolute;top:-2px;bottom:-2px;left:50%;width:1px;background:#d6dce2}
+
+  /* footer */
+  .foot{margin-top:24px;font-size:12.5px;color:#6b7785;line-height:1.7}
+  .foot .read b{color:var(--ink)}
+  .disc{margin-top:10px;text-align:center;color:#aab2bc;font-size:12px}
+  .disc b{color:#8a939e}
+
+  @media(max-width:820px){
+    .cards{grid-template-columns:repeat(2,1fr)}
+    .grid{grid-template-columns:1fr}
+  }
+  /* phone */
+  @media(max-width:560px){
+    .wrap{margin:10px auto;padding:0 8px}
+    .report{padding:16px 14px 18px;border-radius:10px}
+    h1{font-size:21px}
+    .sub{font-size:12px;margin-bottom:14px}
+    .cards{gap:8px;margin-bottom:10px}
+    .c{padding:10px 11px}
+    .c .big{font-size:21px}
+    .c.idx .big{font-size:15px}
+    .blk-h .t{font-size:16px}
+    table{font-size:12px}
+    thead th,tbody td{padding:7px 5px}
+    /* 強弱バー列はスマホでは隠す（騰落率の符号色で方向は分かる） */
+    table thead th:last-child,table tbody td:last-child{display:none}
+    .gap{margin-top:18px}
+    .tab{padding:6px 10px;font-size:12px}
+  }
+</style>
+
+<div class="wrap"><div class="report">
+  <div class="topbar"><button id="refresh">↻ 更新</button><span id="status" class="status"></span></div>
+  <div class="tabs" id="tabs"></div>
+  <div id="report"></div>
+</div></div>
+
+<script>
+/* =========================================================================
+   完全クライアント型ライブ版。ブラウザから Hyperliquid API を直接叩いて
+   その場でデータを組み立て、既存ダッシュボードの描画層で表示する。
+   fetch_report.py（凍結インターフェース）は参照も改変もしない独立実装。
+   ========================================================================= */
+
+/* ---------------- helpers（描画層：fetch_report 出力の d をそのまま描く） ---------------- */
+const fmt = (n) => (n>=1000 ? n.toLocaleString("en-US") : String(n));
+const sign = (p) => (p>=0?"+":"") + p.toFixed(2) + "%";
+const cls  = (p) => (p>=0?"pos":"neg");
+const sgn  = (p) => `<span class="${cls(p)}">${sign(p)}</span>`;
+
+// 半導体(SOX9)・Mag7 の表示用「位置づけ」社名ラベル
+const LABELS = {
+  AMD:"AMD", ARM:"アーム", ASML:"ASML", AVGO:"ブロードコム", INTC:"インテル",
+  MRVL:"マーベル", MU:"マイクロン", NVDA:"エヌビディア", TSM:"TSMC",
+  AAPL:"アップル", MSFT:"マイクロソフト", GOOGL:"アルファベット",
+  AMZN:"アマゾン", META:"メタ", TSLA:"テスラ",
+};
+
+function weakFirst(rows){ return [...rows].sort((a,b)=>a.pct-b.pct); }
+
+function bar(pct, maxAbs){
+  const half = 48;
+  const w = Math.min(Math.abs(pct)/maxAbs, 1) * half;
+  const color = pct>=0 ? "var(--green)" : "var(--orange)";
+  const seg = pct>=0
+    ? `left:50%;width:${w}%;background:${color}`
+    : `right:50%;width:${w}%;background:${color}`;
+  return `<div class="bar"><span class="mid"></span><i style="${seg}"></i></div>`;
+}
+
+function priceRows(rows){
+  const maxAbs = Math.max(...rows.map(r=>Math.abs(r.pct)), 0.0001);
+  return weakFirst(rows).map(r=>`
+    <tr>
+      <td class="sym">${r.sym}</td>
+      <td class="role">${r.role || LABELS[r.sym] || ""}</td>
+      <td class="r num">${fmt(r.open)}</td>
+      <td class="r num">${fmt(r.now)}</td>
+      <td class="pct num ${cls(r.pct)}">${sign(r.pct)}</td>
+      <td>${bar(r.pct, maxAbs)}</td>
+    </tr>`).join("");
+}
+
+function indexRows(rows){
+  const maxAbs = Math.max(...rows.map(r=>Math.abs(r.pct)), 0.0001);
+  return rows.map(r=>`
+    <tr>
+      <td class="sym">${r.sym}</td>
+      <td class="role">${r.role}</td>
+      <td class="r num">${fmt(r.open)}</td>
+      <td class="r num">${fmt(r.now)}</td>
+      <td class="pct num ${cls(r.pct)}">${sign(r.pct)}</td>
+      <td>${bar(r.pct, maxAbs)}</td>
+    </tr>`).join("");
+}
+
+const avgOf = (rows) => rows.reduce((a,r)=>a+r.pct, 0) / rows.length;
+const IDX_SYMS = ["SP500","XYZ100","JP225","KR200"];
+
+function macroCards(d){
+  const pool = [...(d.core_mirror||[]), ...(d.crypto||[])];
+  const picks = [
+    ["GOLD","ゴールド"], ["CL","WTI原油"], ["JPY","ドル円"], ["BTC","ビットコイン"],
+  ];
+  const cards = picks.map(([sym,label])=>{
+    const r = pool.find(x=>x.sym===sym);
+    if(!r) return "";
+    return `<div class="c"><div class="label">${label}</div>
+      <div class="big ${cls(r.pct)}">${sign(r.pct)}<span class="tag">${fmt(r.now)}</span></div></div>`;
+  }).join("");
+  return cards ? `<div class="cards">${cards}</div>` : "";
+}
+
+function macroSection(d){
+  const macro = [...(d.core_mirror||[]), ...(d.commodities||[])]
+    .filter(r => !IDX_SYMS.includes(r.sym));
+  const crypto = d.crypto || [];
+  if(!macro.length && !crypto.length) return "";
+  const tbl = (rows) => `
+    <table>
+      <thead><tr><th>銘柄</th><th>位置づけ</th><th class="r">基準</th><th class="r">現在</th>
+        <th class="r">騰落率</th><th>強弱バー</th></tr></thead>
+      <tbody>${indexRows(rows)}</tbody>
+    </table>`;
+  const left = macro.length ? `
+      <div>
+        <div class="blk-h gap"><div class="t">マクロ・コモディティ<span class="avg ${cls(avgOf(macro))}">平均 ${sign(avgOf(macro))}</span></div>
+          <div class="hint">基準-&gt;現在</div></div>
+        ${tbl(macro)}
+      </div>` : "<div></div>";
+  const right = crypto.length ? `
+      <div>
+        <div class="blk-h gap"><div class="t">クリプト<span class="avg ${cls(avgOf(crypto))}">平均 ${sign(avgOf(crypto))}</span></div>
+          <div class="hint">メインdex無印perp / 24h取引 / 基準-&gt;現在</div></div>
+        ${tbl(crypto)}
+      </div>` : "<div></div>";
+  return `<div class="grid">${left}${right}</div>`;
+}
+
+function asiaSection(d){
+  const rows = d.asia || [];
+  if(!rows.length) return "";
+  const sorted = weakFirst(rows);
+  return `
+    <div class="blk-h gap"><div class="t">アジア<span class="avg ${cls(avgOf(rows))}">平均 ${sign(avgOf(rows))}</span></div>
+      <div class="hint">弱い順 / 基準-&gt;現在</div></div>
+    <table>
+      <thead><tr><th>銘柄</th><th>位置づけ</th><th class="r">基準</th><th class="r">現在</th>
+        <th class="r">騰落率</th><th>強弱バー</th></tr></thead>
+      <tbody>${indexRows(sorted)}</tbody>
+    </table>`;
+}
+
+function groupBlock(rows, title, hint){
+  if(!rows || !rows.length) return "";
+  return `<div>
+      <div class="blk-h gap"><div class="t">${title}<span class="avg ${cls(avgOf(rows))}">平均 ${sign(avgOf(rows))}</span></div>
+        <div class="hint">${hint}</div></div>
+      <table>
+        <thead><tr><th>銘柄</th><th>位置づけ</th><th class="r">基準</th><th class="r">現在</th>
+          <th class="r">騰落率</th><th>強弱バー</th></tr></thead>
+        <tbody>${indexRows(weakFirst(rows))}</tbody>
+      </table>
+    </div>`;
+}
+
+function equityGroups(d){
+  const defs = [
+    ["memory_storage", "メモリ・ストレージ"],
+    ["ai_dc",          "AI・データセンター"],
+    ["crypto_equity",  "クリプト関連株"],
+    ["notable",        "注目株・宇宙ほか"],
+  ];
+  const blocks = defs.map(([k,t]) => groupBlock(d[k], t, "弱い順 / 基準-&gt;現在")).filter(Boolean);
+  return blocks.length ? `<div class="grid">${blocks.join("")}</div>` : "";
+}
+
+function render(d){
+  const s = d.summary, m = d.meta, h = d.highlight;
+  const exSemi = d.semis[0], exNow = exSemi.now, exOpen = exSemi.open;
+  document.getElementById("report").innerHTML = `
+    <h1>${m.title}</h1>
+    <p class="sub"><b>${m.baseline}</b> -&gt; 出力時点 &nbsp;/&nbsp;
+       <b>${m.outputTime}</b> &nbsp;/&nbsp; 経過 <b>${m.elapsed}</b></p>
+
+    <div class="cards">
+      <div class="c"><div class="label">半導体平均</div>
+        <div class="big ${cls(s.semiAvg)}">${sign(s.semiAvg)}<span class="tag">SOX採用${s.semiCount}銘柄</span></div></div>
+      <div class="c"><div class="label">Mag7平均</div>
+        <div class="big ${cls(s.mag7Avg)}">${sign(s.mag7Avg)}<span class="tag">${s.mag7Count}銘柄</span></div></div>
+      <div class="c idx"><div class="label">指数比較</div>
+        <div class="big">XYZ100 ${sgn(s.xyz100)} / SP500 ${sgn(s.sp500)}</div></div>
+    </div>
+    ${macroCards(d)}
+
+    <div class="note">相対強/弱 &nbsp;<b>${h.strong.sym}</b> ${sgn(h.strong.pct)}
+      &nbsp;/&nbsp; <b>${h.weak.sym}</b> ${sgn(h.weak.pct)} &nbsp;&nbsp;${h.note}</div>
+
+    <div class="grid">
+      <div>
+        <div class="blk-h"><div class="t">半導体（SOX採用）<span class="avg ${cls(s.semiAvg)}">平均 ${sign(s.semiAvg)}</span></div>
+          <div class="hint">弱い順 / 基準-&gt;現在</div></div>
+        <table class="posbg">
+          <thead><tr><th>銘柄</th><th>位置づけ</th><th class="r">基準価格</th><th class="r">現在価格</th>
+            <th class="r">騰落率</th><th>強弱バー</th></tr></thead>
+          <tbody>${priceRows(d.semis)}</tbody>
+        </table>
+        ${asiaSection(d)}
+      </div>
+      <div>
+        <div class="blk-h"><div class="t">Mag7<span class="avg ${cls(s.mag7Avg)}">平均 ${sign(s.mag7Avg)}</span></div>
+          <div class="hint">弱い順 / 基準-&gt;現在</div></div>
+        <table class="megabg">
+          <thead><tr><th>銘柄</th><th>位置づけ</th><th class="r">基準価格</th><th class="r">現在価格</th>
+            <th class="r">騰落率</th><th>強弱バー</th></tr></thead>
+          <tbody>${priceRows(d.mag7)}</tbody>
+        </table>
+
+        <div class="blk-h gap"><div class="t">指数 平均比較</div>
+          <div class="hint">基準-&gt;現在</div></div>
+        <table>
+          <thead><tr><th>指数</th><th>位置づけ</th><th class="r">基準</th><th class="r">現在</th>
+            <th class="r">騰落率</th><th>強弱バー</th></tr></thead>
+          <tbody>${indexRows(d.indices)}</tbody>
+        </table>
+      </div>
+    </div>
+    ${equityGroups(d)}
+    ${macroSection(d)}
+
+    <div class="foot">
+      <div class="read">読み方: 例）<b>${exSemi.sym}</b>は基準価格 ${fmt(exOpen)} から現在 ${fmt(exNow)}、${sgn(exSemi.pct)}。</div>
+      <div class="read">指数比では XYZ100 ${sgn(s.xyz100)}、SP500 ${sgn(s.sp500)}。</div>
+      <div class="disc">注: <b>Hyperliquid xyz perp</b>の価格です。現物株・公式指数価格ではありません。<b>時間外・週末センチメント監視用。</b><br>
+        半導体 = SOX（フィラデルフィア半導体指数）採用銘柄のうち時間外データが取れる${s.semiCount}銘柄。NVDA は SOX / Mag7 双方の採用銘柄。<br>
+        一部銘柄（WDC 等）は板が薄く、値が動きにくい・飛びやすい場合があります。</div>
+    </div>`;
+}
+
+/* ---------------- preset tabs ---------------- */
+let PRESET_LIST = [];
+function show(key){
+  if(!PRESET_LIST.length) return;
+  const p = PRESET_LIST.find(x => x.key === key) || PRESET_LIST[0];
+  render(p.data);
+  const tabs = document.getElementById("tabs");
+  tabs.innerHTML = PRESET_LIST.length > 1
+    ? PRESET_LIST.map(x =>
+        `<button class="tab ${x.key === p.key ? "on" : ""}" onclick="show('${x.key}')">${x.label}</button>`
+      ).join("")
+    : "";
+}
+
+/* =========================================================================
+   データ層：ブラウザで Hyperliquid API を叩き、fetch_report.py と同じ
+   グルーピング・集計で d（描画層が期待する形）を組み立てる。
+   ========================================================================= */
+const BASE_URL = "https://api.hyperliquid.xyz/info";
+const DEX = "xyz";
+
+// グループ定義（spec, role）。fetch_report.py の GROUPS と同一構成。
+// 半導体(SOX9)/Mag7/indices は role なし（社名は LABELS で表示）。
+const GROUPS = {
+  semis:   ["AMD","ARM","ASML","AVGO","INTC","MRVL","MU","NVDA","TSM"].map(c=>[`${DEX}:${c}`,null]),
+  mag7:    ["AAPL","MSFT","GOOGL","AMZN","META","NVDA","TSLA"].map(c=>[`${DEX}:${c}`,null]),
+  indices: [["XYZ100","NASDAQ/ハイテク proxy"],["SP500","S&P 500"],["JP225","日経225"],["KR200","韓国200"]]
+             .map(([c,r])=>[`${DEX}:${c}`,r]),
+  core_mirror: [["SP500","S&P 500"],["XYZ100","NASDAQ/ハイテク proxy"],["JP225","日経225"],
+    ["VIX","VIX恐怖指数"],["JPY","ドル円"],["DXY","ドル指数"],["GOLD","ゴールド"],["CL","WTI原油"]]
+      .map(([c,r])=>[`${DEX}:${c}`,r]),
+  commodities: [["SILVER","シルバー"],["BRENTOIL","ブレント原油"],["NATGAS","天然ガス"]]
+      .map(([c,r])=>[`${DEX}:${c}`,r]),
+  crypto: [["BTC","ビットコイン"],["ETH","イーサリアム"],["SOL","ソラナ"],["PAXG","ゴールド連動トークン"]],
+  asia: [["SMSN","サムスン電子"],["SKHX","SKハイニックス"],["HYUNDAI","現代自動車"],["BABA","アリババ"],
+    ["EWJ","日本株ETF"],["EWY","韓国株ETF"],["EWT","台湾株ETF"]].map(([c,r])=>[`${DEX}:${c}`,r]),
+  memory_storage: [["SNDK","サンディスク"],["WDC","ウエスタンデジタル"],["DRAM","DRAM価格指数"]]
+      .map(([c,r])=>[`${DEX}:${c}`,r]),
+  ai_dc: [["ORCL","オラクル"],["PLTR","パランティア"],["CRWV","コアウィーブ"],["NBIS","ネビウス"],
+    ["DELL","デル"],["NOW","サービスナウ"]].map(([c,r])=>[`${DEX}:${c}`,r]),
+  crypto_equity: [["COIN","コインベース"],["MSTR","ストラテジー"],["HOOD","ロビンフッド"],["CRCL","サークル"]]
+      .map(([c,r])=>[`${DEX}:${c}`,r]),
+  notable: [["SPCX","スペースX系"],["RKLB","ロケットラボ"],["LLY","イーライリリー"],["NFLX","ネットフリックス"],
+    ["HIMS","Hims & Hers"]].map(([c,r])=>[`${DEX}:${c}`,r]),
+};
+const HTML_GROUPS = ["semis","mag7","indices","core_mirror","commodities","crypto","asia",
+                     "memory_storage","ai_dc","crypto_equity","notable"];
+const PRESETS = { us_close:"直近の米国クローズ", weekend:"前週末の米国クローズ", jp_close:"東京クローズ 15:30" };
+const PRESET_KEYS = ["us_close","weekend","jp_close"];
+
+/* --- JST 時刻ユーティリティ（+9h シフトして UTC 読みする標準テクニック） --- */
+const pad = (n) => String(n).padStart(2,"0");
+function jstParts(ms){ const d=new Date(ms+9*3600e3);
+  return {y:d.getUTCFullYear(),mo:d.getUTCMonth(),da:d.getUTCDate(),dow:d.getUTCDay(),
+          h:d.getUTCHours(),mi:d.getUTCMinutes(),s:d.getUTCSeconds()}; }
+function jstMs(y,mo,da,h,mi){ return Date.UTC(y,mo,da,h,mi) - 9*3600e3; }
+function fmtClock(ms){ const p=jstParts(ms);
+  return `${p.y}-${pad(p.mo+1)}-${pad(p.da)} ${pad(p.h)}:${pad(p.mi)}:${pad(p.s)}`; }
+function fmtMD(ms){ const p=jstParts(ms); return `${pad(p.mo+1)}/${pad(p.da)} ${pad(p.h)}:${pad(p.mi)}`; }
+function fmtElapsed(ms){ const t=Math.floor(ms/60000); return `${Math.floor(t/60)}時間${t%60}分`; }
+
+/* --- 米国アフター終了時刻（夏=09:00 / 冬=10:00 JST）。fetch_report.py の DST 判定と同等 --- */
+function firstSundayUTC(y,mo){ const dow=new Date(Date.UTC(y,mo,1)).getUTCDay(); return 1+((7-dow)%7); }
+function usDst(y,mo,da){
+  const cur=Date.UTC(y,mo,da);
+  const mar=Date.UTC(y,2, firstSundayUTC(y,2)+7); // 3月第2日曜
+  const nov=Date.UTC(y,10, firstSundayUTC(y,10)); // 11月第1日曜
+  return cur>=mar && cur<nov;
+}
+function usCloseHourJst(y,mo,da){
+  const prev=jstParts(jstMs(y,mo,da,0,0)-86400000); // 前日（米セッション当日）
+  return usDst(prev.y,prev.mo,prev.da) ? 9 : 10;
+}
+function resolvePreset(key, nowMs){
+  let p=jstParts(nowMs);
+  for(let i=0;i<14;i++){
+    let cand, ok;
+    if(key==='jp_close'){ cand=jstMs(p.y,p.mo,p.da,15,30); ok=(p.dow>=1 && p.dow<=5); } // 月〜金
+    else { const hr=usCloseHourJst(p.y,p.mo,p.da); cand=jstMs(p.y,p.mo,p.da,hr,0);
+           ok = key==='us_close' ? (p.dow>=2 && p.dow<=6) : (p.dow===6); } // 火〜土 / 土のみ
+    if(ok && cand<=nowMs) return {baselineMs:cand, label:PRESETS[key]};
+    p=jstParts(jstMs(p.y,p.mo,p.da,12,0)-86400000);
+  }
+  throw new Error("プリセット解決失敗: "+key);
+}
+
+/* --- 数値整形（fetch_report.py の clean_price / 丸め と同等） --- */
+const round2 = (v) => Math.round(v*100)/100;
+function cleanPrice(v){
+  if(v>=1000) return Math.round(v*10)/10;
+  if(v>=100)  return Math.round(v*100)/100;
+  return Math.round(v*1000)/1000;
+}
+const avgPct = (rows) => rows.length ? round2(rows.reduce((a,r)=>a+r.pct,0)/rows.length) : 0;
+
+/* --- API --- */
+async function post(body){
+  let err;
+  for(let a=0;a<4;a++){
+    try{
+      const r=await fetch(BASE_URL,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+      if(!r.ok) throw new Error("HTTP "+r.status);
+      return await r.json();
+    }catch(e){ err=e; await new Promise(res=>setTimeout(res, 600*(a+1) + Math.random()*400)); } // ジッター付きバックオフ
+  }
+  throw err;
+}
+async function fetchMids(dex){
+  const body={type:"allMids"}; if(dex) body.dex=dex;
+  const raw=await post(body); const out={};
+  for(const [k,v] of Object.entries(raw)){
+    if(dex){ if(!k.startsWith(dex+":")) continue; }
+    else if(k.includes(":")||k.startsWith("@")) continue;
+    const f=parseFloat(v); if(!Number.isNaN(f)) out[k]=f;
+  }
+  return out;
+}
+async function fetchMidsForSpecs(specs){
+  const dexes=[...new Set(specs.map(s=>s.includes(":")?s.split(":")[0]:""))];
+  const mids={};
+  for(const d of dexes) Object.assign(mids, await fetchMids(d));
+  return mids;
+}
+const _openCache=new Map();
+const INTERVALS=["1m","5m","15m","1h"];   // 1分足は数日で消えるため粗い足へフォールバック
+async function fetchOpenPrice(spec, baselineMs){
+  const ck=spec+"@"+baselineMs;
+  if(_openCache.has(ck)) return _openCache.get(ck);
+  const win=2*3600000; // ±2時間
+  for(const interval of INTERVALS){
+    let candles;
+    try{ candles=await post({type:"candleSnapshot",
+      req:{coin:spec,interval,startTime:baselineMs-win,endTime:baselineMs+win}}); }
+    catch(e){ continue; }
+    if(!candles || !candles.length) continue;
+    const before=candles.filter(c=>(c.t||0)<=baselineMs);
+    let val;
+    if(before.length){ const ch=before.reduce((a,b)=>b.t>a.t?b:a); val=parseFloat(ch.c); }
+    else { const f=candles.reduce((a,b)=>b.t<a.t?b:a); val=parseFloat(f.o); }
+    _openCache.set(ck,val); return val;
+  }
+  return null;  // 一過性の取得失敗を引きずらないよう null はキャッシュしない（更新で再試行可能）
+}
+
+// 並行数を絞って順に処理（スマホ回線・API 配慮）
+async function mapPool(items, fn, n){
+  let i=0;
+  const run=async()=>{ while(i<items.length){ const idx=i++; await fn(items[idx], idx); } };
+  await Promise.all(Array.from({length:Math.min(n,items.length)}, run));
+}
+
+async function buildData(baselineMs, label, nowMs, mids){
+  const specs=[...new Set(HTML_GROUPS.flatMap(g=>GROUPS[g].map(([s])=>s)))];
+  const opens={};
+  await mapPool(specs, async (spec)=>{ opens[spec]=await fetchOpenPrice(spec, baselineMs); }, 4);
+
+  const groupRows={};
+  for(const g of HTML_GROUPS){
+    groupRows[g]=GROUPS[g].map(([spec,role])=>{
+      const sym = spec.includes(":") ? spec.split(":").pop() : spec;
+      const nowPx=mids[spec], openPx=opens[spec];
+      if(nowPx==null || openPx==null || openPx===0) return null;
+      const row={sym, open:cleanPrice(openPx), now:cleanPrice(nowPx), pct:round2((nowPx/openPx-1)*100)};
+      if(role) row.role=role;
+      return row;
+    }).filter(Boolean);
+  }
+
+  const semis=groupRows.semis, mag7=groupRows.mag7, combined=[...semis,...mag7];
+  if(!combined.length) throw new Error("半導体・Mag7 の価格を取得できませんでした");
+  const idxMap={}; (groupRows.indices||[]).forEach(r=>idxMap[r.sym]=r.pct);
+  const strong=combined.reduce((a,b)=>b.pct>a.pct?b:a);
+  const weak=combined.reduce((a,b)=>b.pct<a.pct?b:a);
+
+  const d={
+    meta:{ title:"Hyperliquid 価格発見レポート",
+      baseline:`${label}（${fmtMD(baselineMs)} JST）`,
+      outputTime:`${fmtClock(nowMs)} JST`, elapsed:fmtElapsed(nowMs-baselineMs) },
+    summary:{ semiAvg:avgPct(semis), semiCount:semis.length, mag7Avg:avgPct(mag7), mag7Count:mag7.length,
+      xyz100: idxMap.XYZ100 ?? 0, sp500: idxMap.SP500 ?? 0 },
+    highlight:{ strong:{sym:strong.sym,pct:strong.pct}, weak:{sym:weak.sym,pct:weak.pct},
+      note:"※NASDAQ直名はxyzにないためXYZ100をproxyとして表示" },
+  };
+  for(const g of HTML_GROUPS) d[g]=groupRows[g];
+  return d;
+}
+
+/* ---------------- orchestration ---------------- */
+const $ = (id) => document.getElementById(id);
+function setStatus(msg, err){ const s=$("status"); s.textContent=msg; s.className="status"+(err?" err":""); }
+
+async function load(){
+  $("refresh").disabled=true;
+  setStatus("読み込み中…");
+  if(!PRESET_LIST.length) $("report").innerHTML = `<p class="sub">最新データを取得しています…</p>`;
+  try{
+    const nowMs=Date.now();
+    const allSpecs=[...new Set(HTML_GROUPS.flatMap(g=>GROUPS[g].map(([s])=>s)))];
+    const mids=await fetchMidsForSpecs(allSpecs);
+    const presets=[];
+    for(const k of PRESET_KEYS){
+      const {baselineMs,label}=resolvePreset(k, nowMs);
+      presets.push({key:k, label, data:await buildData(baselineMs, label, nowMs, mids)});
+    }
+    PRESET_LIST=presets;
+    show(PRESET_KEYS[0]);
+    setStatus("最終更新 "+fmtClock(nowMs).slice(11)+"（タップで全画面の銘柄が最新化）");
+  }catch(e){
+    setStatus("取得失敗: "+(e&&e.message||e)+"（更新で再試行）", true);
+  }finally{
+    $("refresh").disabled=false;
+  }
+}
+
+$("refresh").addEventListener("click", load);
+load();
+</script>
