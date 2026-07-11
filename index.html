@@ -85,10 +85,11 @@
   .posbg tr:hover td,.megabg tr:hover td{background:#fbfcfd}
   td.role{color:var(--muted);font-size:12px}
 
-  /* strength bar (diverging from center) */
+  /* strength bar (diverging from center・固定スケール±5%) */
   .bar{position:relative;height:11px;background:var(--track);border-radius:6px;min-width:120px}
   .bar i{position:absolute;top:0;height:100%;border-radius:6px}
   .bar .mid{position:absolute;top:-2px;bottom:-2px;left:50%;width:1px;background:#d6dce2}
+  .bar .over{position:absolute;top:50%;transform:translateY(-50%);font-size:9px;line-height:1;font-weight:700}
 
   /* footer */
   .foot{margin-top:24px;font-size:12.5px;color:#6b7785;line-height:1.7}
@@ -149,18 +150,24 @@ const LABELS = {
 
 function weakFirst(rows){ return [...rows].sort((a,b)=>a.pct-b.pct); }
 
-function bar(pct, maxAbs){
+// 強弱バーは固定スケール（±BAR_FULL%で最大）。相対スケールをやめ、常に同じ基準で見比べられる。
+// 5% の根拠: 実測で最も荒い「個別株」の日次変動90%点≈4.7%＝日常の9割は収まり、真の大変動だけ振り切れる。
+const BAR_FULL = 5;
+function bar(pct){
   const half = 48;
-  const w = Math.min(Math.abs(pct)/maxAbs, 1) * half;
+  const over = Math.abs(pct) >= BAR_FULL;                 // 振り切れ（±5%以上）
+  const w = Math.min(Math.abs(pct)/BAR_FULL, 1) * half;
   const color = pct>=0 ? "var(--green)" : "var(--orange)";
   const seg = pct>=0
     ? `left:50%;width:${w}%;background:${color}`
     : `right:50%;width:${w}%;background:${color}`;
-  return `<div class="bar"><span class="mid"></span><i style="${seg}"></i></div>`;
+  const mark = over
+    ? `<span class="over" style="${pct>=0?'right':'left'}:1px;color:${color}">${pct>=0?'▶':'◀'}</span>`
+    : "";
+  return `<div class="bar"><span class="mid"></span><i style="${seg}"></i>${mark}</div>`;
 }
 
 function priceRows(rows){
-  const maxAbs = Math.max(...rows.map(r=>Math.abs(r.pct)), 0.0001);
   return weakFirst(rows).map(r=>`
     <tr>
       <td class="sym">${r.sym}</td>
@@ -168,12 +175,11 @@ function priceRows(rows){
       <td class="r num">${fmt(r.open)}</td>
       <td class="r num">${fmt(r.now)}</td>
       <td class="pct num ${cls(r.pct)}">${sign(r.pct)}</td>
-      <td>${bar(r.pct, maxAbs)}</td>
+      <td>${bar(r.pct)}</td>
     </tr>`).join("");
 }
 
 function indexRows(rows){
-  const maxAbs = Math.max(...rows.map(r=>Math.abs(r.pct)), 0.0001);
   return rows.map(r=>`
     <tr>
       <td class="sym">${r.sym}</td>
@@ -181,7 +187,7 @@ function indexRows(rows){
       <td class="r num">${fmt(r.open)}</td>
       <td class="r num">${fmt(r.now)}</td>
       <td class="pct num ${cls(r.pct)}">${sign(r.pct)}</td>
-      <td>${bar(r.pct, maxAbs)}</td>
+      <td>${bar(r.pct)}</td>
     </tr>`).join("");
 }
 
@@ -322,18 +328,55 @@ function render(d){
     <div class="foot">
       <div class="read">読み方: 例）<b>${exSemi.sym}</b>は基準価格 ${fmt(exOpen)} から現在 ${fmt(exNow)}、${sgn(exSemi.pct)}。</div>
       <div class="read">指数比では XYZ100 ${sgn(s.xyz100)}、SP500 ${sgn(s.sp500)}。</div>
-      <div class="disc">注: <b>Hyperliquid xyz perp</b>の価格です。現物株・公式指数価格ではありません。<b>時間外・週末センチメント監視用。</b><br>
+      <div class="disc">強弱バーは常に <b>±5%で最大の固定スケール</b>（銘柄どうし・更新のたびに基準が揃う）。<b>▶ / ◀ = 振り切れ（±5%超）</b>。指数は元々小さく動くため短く出ます。<br>
+        注: <b>Hyperliquid xyz perp</b>の価格です。現物株・公式指数価格ではありません。<b>時間外・週末センチメント監視用。</b><br>
         半導体 = SOX（フィラデルフィア半導体指数）採用銘柄のうち時間外データが取れる${s.semiCount}銘柄。NVDA は SOX / Mag7 双方の採用銘柄。<br>
         一部銘柄（WDC 等）は板が薄く、値が動きにくい・飛びやすい場合があります。</div>
     </div>`;
 }
 
+/* ---------------- 押し目レーダーの描画 ---------------- */
+function radarBar(score){
+  const w = Math.max(0, Math.min(1, score)) * 100;
+  return `<div class="bar"><i style="left:0;width:${w}%;background:var(--green)"></i></div>`;
+}
+function renderRadar(rows){
+  const body = rows.map((r,i)=>`
+    <tr>
+      <td class="r num" style="color:var(--muted)">${i+1}</td>
+      <td class="sym">${r.sym}</td>
+      <td class="role">${r.name}${r.flags?` <span style="color:var(--orange)">⚠${r.flags}</span>`:""}</td>
+      <td class="r num">${fmt(r.now)}</td>
+      <td class="r num">${fmt(r.high)}</td>
+      <td class="pct num ${r.drawdown<0?"neg":"pos"}">${r.drawdown.toFixed(2)}%</td>
+      <td class="pct num ${cls(r.periodRet)}">${sign(r.periodRet)}</td>
+      <td class="r num">${r.volSurge.toFixed(2)}x</td>
+      <td class="pct num">${r.score.toFixed(2)}</td>
+      <td>${radarBar(r.score)}</td>
+    </tr>`).join("");
+  document.getElementById("report").innerHTML = `
+    <h1>押し目レーダー</h1>
+    <p class="sub">Hyperliquid xyz perp / 直近7日の1時間足で算出 / <b>スコアが高い順（＝押し目候補）</b></p>
+    <div class="note"><b>押し目スコア</b> = 期間トレンド 0.40 ＋ 押し目の深さ 0.35（理想 −8%付近）＋ 出来高加速 0.25
+      − リスク控除（⚠下降トレンド 0.15 / ⚠15%超の深押し 0.10）。
+      上昇基調で高値から適度に下げ、出来高が戻ってきた銘柄ほど上位になります。</div>
+    <table class="posbg">
+      <thead><tr><th class="r">#</th><th>銘柄</th><th>位置づけ</th><th class="r">現在</th><th class="r">期間高値</th>
+        <th class="r">高値から</th><th class="r">期間騰落</th><th class="r">出来高比</th><th class="r">スコア</th><th>強さ</th></tr></thead>
+      <tbody>${body}</tbody>
+    </table>
+    <div class="foot"><div class="disc">注: <b>実験的な指標</b>です。値は <b>xyz perp</b>（現物株・公式指数ではない）由来。
+      売買の判断そのものではなく、候補を絞る目安としてご利用ください。</div></div>`;
+}
+
 /* ---------------- preset tabs ---------------- */
 let PRESET_LIST = [];
+let CURRENT_KEY = null;   // 選択中タブ（更新後も維持する）
 function show(key){
   if(!PRESET_LIST.length) return;
   const p = PRESET_LIST.find(x => x.key === key) || PRESET_LIST[0];
-  render(p.data);
+  CURRENT_KEY = p.key;
+  if(p.radar) renderRadar(p.rows); else render(p.data);
   const tabs = document.getElementById("tabs");
   tabs.innerHTML = PRESET_LIST.length > 1
     ? PRESET_LIST.map(x =>
@@ -377,6 +420,11 @@ const HTML_GROUPS = ["semis","mag7","indices","core_mirror","commodities","crypt
                      "memory_storage","ai_dc","crypto_equity","notable"];
 const PRESETS = { us_close:"直近の米国クローズ", weekend:"前週末の米国クローズ", jp_close:"東京クローズ 15:30" };
 const PRESET_KEYS = ["us_close","weekend","jp_close"];
+
+// 押し目レーダー（実験・別タブ）: 株らしいグループだけを対象に、直近の値動きから
+// 「押し目候補スコア」を算出する。基準時点プリセットとは独立した別概念のビュー。
+const RADAR_GROUPS = ["semis","mag7","memory_storage","ai_dc","crypto_equity","notable"];
+const RADAR_EXCLUDE = new Set(["xyz:DRAM"]);  // 株でない価格指数perpは押し目候補から外す
 
 /* --- JST 時刻ユーティリティ（+9h シフトして UTC 読みする標準テクニック） --- */
 const pad = (n) => String(n).padStart(2,"0");
@@ -515,6 +563,63 @@ async function buildData(baselineMs, label, nowMs, mids){
   return d;
 }
 
+/* --- 押し目レーダー: 直近7日の1時間足から候補スコアを算出（実験・凍結非抵触） --- */
+async function fetchCandles(spec, startMs, endMs, interval){
+  try{
+    const c = await post({type:"candleSnapshot", req:{coin:spec, interval, startTime:startMs, endTime:endMs}});
+    return Array.isArray(c) ? c : [];
+  }catch(e){ return []; }
+}
+async function buildRadar(mids, nowMs){
+  // spec -> 位置づけ名（GROUPS の role / LABELS を流用）
+  const nameOf = {};
+  for(const g of RADAR_GROUPS) for(const [spec,role] of GROUPS[g]){
+    const sym = spec.includes(":") ? spec.split(":").pop() : spec;
+    if(!(spec in nameOf)) nameOf[spec] = role || LABELS[sym] || "";
+  }
+  const specs = [...new Set(RADAR_GROUPS.flatMap(g=>GROUPS[g].map(([s])=>s)))]
+    .filter(s=>!RADAR_EXCLUDE.has(s));
+  const startMs = nowMs - 7*86400000;   // 直近7日
+  const clamp = (x)=>Math.max(0, Math.min(1, x));
+  const rows = [];
+  await mapPool(specs, async (spec)=>{
+    const now = mids[spec];
+    if(now==null || !(now>0)) return;
+    const candles = await fetchCandles(spec, startMs, nowMs, "1h");
+    if(candles.length < 12) return;                 // データ不足は除外
+    const highs = candles.map(c=>parseFloat(c.h));
+    const vols  = candles.map(c=>parseFloat(c.v));
+    const periodHigh = Math.max(...highs);
+    const firstOpen  = parseFloat(candles[0].o);
+    if(!(periodHigh>0) || !(firstOpen>0)) return;
+    const drawdown  = (now/periodHigh - 1)*100;      // ≤0（高値からの下落率）
+    const periodRet = (now/firstOpen  - 1)*100;      // 期間トレンド
+    // 出来高比 = 直近24h ÷ それ以前の24h平均（自分を分母に入れない。Python版と平仄）
+    const last24 = vols.slice(-24).reduce((a,b)=>a+b, 0);
+    const priorV = vols.slice(0, -24);
+    const avg24  = priorV.length >= 24
+      ? priorV.reduce((a,b)=>a+b, 0) / (priorV.length/24)
+      : vols.reduce((a,b)=>a+b, 0) / Math.max(1, vols.length/24);  // データ短時のフォールバック
+    const volSurge = avg24>0 ? last24/avg24 : 0;
+    // 透明な合成スコア: 上昇基調 × 適度な押し目(理想 -8%) × 出来高の戻り − リスク控除
+    const trendScore = clamp(periodRet/15);
+    const dipScore   = clamp(1 - Math.abs(drawdown+8)/12);
+    const volScore   = clamp((volSurge-1)/1.0);
+    // リスク控除: 下降トレンド銘柄が押し目+出来高だけで上位に来る「落ちるナイフ」を弾く
+    const flags = [];
+    let ded = 0;
+    if(periodRet < 0){ flags.push("下降"); ded += 0.15; }
+    if(drawdown < -15){ flags.push("深押し"); ded += 0.10; }
+    const score = clamp(0.40*trendScore + 0.35*dipScore + 0.25*volScore - ded);
+    const sym = spec.includes(":") ? spec.split(":").pop() : spec;
+    rows.push({ sym, name:nameOf[spec], now:cleanPrice(now), high:cleanPrice(periodHigh),
+      drawdown:round2(drawdown), periodRet:round2(periodRet),
+      volSurge:round2(volSurge), score:Math.round(score*100)/100, flags:flags.join("・") });
+  }, 4);
+  rows.sort((a,b)=>b.score-a.score);
+  return rows;
+}
+
 /* ---------------- orchestration ---------------- */
 const $ = (id) => document.getElementById(id);
 function setStatus(msg, err){ const s=$("status"); s.textContent=msg; s.className="status"+(err?" err":""); }
@@ -532,9 +637,18 @@ async function load(){
       const {baselineMs,label}=resolvePreset(k, nowMs);
       presets.push({key:k, label, data:await buildData(baselineMs, label, nowMs, mids)});
     }
+    const wanted = CURRENT_KEY;   // 更新前に見ていたタブを維持する
     PRESET_LIST=presets;
-    show(PRESET_KEYS[0]);
+    show(presets.some(x=>x.key===wanted) ? wanted : PRESET_KEYS[0]);
     setStatus("最終更新 "+fmtClock(nowMs).slice(11)+"（タップで全画面の銘柄が最新化）");
+    // 押し目レーダーは任意ビュー。本体表示後に組み立て、成功時のみタブを足す（失敗しても本体に影響なし）
+    try{
+      const radar = await buildRadar(mids, nowMs);
+      if(radar.length){
+        PRESET_LIST = [...presets, {key:"radar", label:"押し目レーダー", radar:true, rows:radar}];
+        show(wanted==="radar" ? "radar" : CURRENT_KEY);   // 閲覧中タブは維持しつつタブ一覧にレーダーを反映
+      }
+    }catch(e){ /* レーダー失敗は無視 */ }
   }catch(e){
     setStatus("取得失敗: "+(e&&e.message||e)+"（更新で再試行）", true);
   }finally{
