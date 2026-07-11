@@ -369,20 +369,44 @@ function renderRadar(rows){
       売買の判断そのものではなく、候補を絞る目安としてご利用ください。</div></div>`;
 }
 
-/* ---------------- preset tabs ---------------- */
-let PRESET_LIST = [];
-let CURRENT_KEY = null;   // 選択中タブ（更新後も維持する）
-function show(key){
-  if(!PRESET_LIST.length) return;
-  const p = PRESET_LIST.find(x => x.key === key) || PRESET_LIST[0];
-  CURRENT_KEY = p.key;
-  if(p.radar) renderRadar(p.rows); else render(p.data);
+/* ---------------- タブ（遅延読み込み） ----------------
+   初回は既定タブだけ取得し、他プリセット・押し目レーダーは「タブを開いた時」に取得する。
+   これで初回のAPIリクエスト集中（＝Hyperliquid側 429）を避ける。レーダータブは常に表示。 */
+let VIEWS = [];        // {key,label,kind:'preset'|'radar', baselineMs?, nowMs, built, loading, data?, rows?}
+let MIDS = null;       // 直近 allMids（全タブで共有・load 時に更新）
+let CURRENT_KEY = null;
+
+function renderTabs(activeKey){
   const tabs = document.getElementById("tabs");
-  tabs.innerHTML = PRESET_LIST.length > 1
-    ? PRESET_LIST.map(x =>
-        `<button class="tab ${x.key === p.key ? "on" : ""}" onclick="show('${x.key}')">${x.label}</button>`
+  tabs.innerHTML = VIEWS.length > 1
+    ? VIEWS.map(v =>
+        `<button class="tab ${v.key === activeKey ? "on" : ""}" onclick="show('${v.key}')">${v.label}</button>`
       ).join("")
     : "";
+}
+
+async function buildView(v){
+  if(v.kind === "radar") v.rows = await buildRadar(MIDS, v.nowMs);
+  else                   v.data = await buildData(v.baselineMs, v.label, v.nowMs, MIDS);
+  v.built = true;
+}
+
+async function show(key){
+  const v = VIEWS.find(x => x.key === key) || VIEWS[0];
+  if(!v) return;
+  CURRENT_KEY = v.key;
+  renderTabs(v.key);
+  if(!v.built){
+    if(v.loading) return;                       // 二重取得を防ぐ
+    v.loading = true;
+    setStatus(`「${v.label}」を取得中…`);
+    document.getElementById("report").innerHTML = `<p class="sub">${v.label} を取得しています…</p>`;
+    try{ await buildView(v); }
+    catch(e){ setStatus("取得失敗: " + (e && e.message || e) + "（更新で再試行）", true); v.loading = false; return; }
+    v.loading = false;
+    setStatus("最終更新 " + fmtClock(v.nowMs).slice(11));
+  }
+  if(v.kind === "radar") renderRadar(v.rows); else render(v.data);
 }
 
 /* =========================================================================
@@ -627,28 +651,22 @@ function setStatus(msg, err){ const s=$("status"); s.textContent=msg; s.classNam
 async function load(){
   $("refresh").disabled=true;
   setStatus("読み込み中…");
-  if(!PRESET_LIST.length) $("report").innerHTML = `<p class="sub">最新データを取得しています…</p>`;
+  if(!VIEWS.length) $("report").innerHTML = `<p class="sub">最新データを取得しています…</p>`;
   try{
     const nowMs=Date.now();
     const allSpecs=[...new Set(HTML_GROUPS.flatMap(g=>GROUPS[g].map(([s])=>s)))];
-    const mids=await fetchMidsForSpecs(allSpecs);
-    const presets=[];
-    for(const k of PRESET_KEYS){
-      const {baselineMs,label}=resolvePreset(k, nowMs);
-      presets.push({key:k, label, data:await buildData(baselineMs, label, nowMs, mids)});
-    }
-    const wanted = CURRENT_KEY;   // 更新前に見ていたタブを維持する
-    PRESET_LIST=presets;
-    show(presets.some(x=>x.key===wanted) ? wanted : PRESET_KEYS[0]);
-    setStatus("最終更新 "+fmtClock(nowMs).slice(11)+"（タップで全画面の銘柄が最新化）");
-    // 押し目レーダーは任意ビュー。本体表示後に組み立て、成功時のみタブを足す（失敗しても本体に影響なし）
-    try{
-      const radar = await buildRadar(mids, nowMs);
-      if(radar.length){
-        PRESET_LIST = [...presets, {key:"radar", label:"押し目レーダー", radar:true, rows:radar}];
-        show(wanted==="radar" ? "radar" : CURRENT_KEY);   // 閲覧中タブは維持しつつタブ一覧にレーダーを反映
-      }
-    }catch(e){ /* レーダー失敗は無視 */ }
+    MIDS = await fetchMidsForSpecs(allSpecs);
+    // 全タブを登録（未取得）。押し目レーダーも常に出す。取得は開いた時＝初回の集中を避ける。
+    VIEWS = PRESET_KEYS.map(k => {
+      const {baselineMs, label} = resolvePreset(k, nowMs);
+      return {key:k, label, kind:"preset", baselineMs, nowMs, built:false, loading:false};
+    });
+    VIEWS.push({key:"radar", label:"押し目レーダー", kind:"radar", nowMs, built:false, loading:false});
+    // 既定タブ（前回見ていたタブ）だけ取得して表示。他タブは開いた時に取得。
+    const wanted = VIEWS.some(v=>v.key===CURRENT_KEY) ? CURRENT_KEY : PRESET_KEYS[0];
+    await show(wanted);
+    if(!document.querySelector(".status.err"))
+      setStatus("最終更新 "+fmtClock(nowMs).slice(11)+"（各タブは開いた時に取得）");
   }catch(e){
     setStatus("取得失敗: "+(e&&e.message||e)+"（更新で再試行）", true);
   }finally{
