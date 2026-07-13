@@ -461,7 +461,8 @@ function fmtClock(ms){ const p=jstParts(ms);
 function fmtMD(ms){ const p=jstParts(ms); return `${pad(p.mo+1)}/${pad(p.da)} ${pad(p.h)}:${pad(p.mi)}`; }
 function fmtElapsed(ms){ const t=Math.floor(ms/60000); return `${Math.floor(t/60)}時間${t%60}分`; }
 
-/* --- 米国アフター終了時刻（夏=09:00 / 冬=10:00 JST）。fetch_report.py の DST 判定と同等 --- */
+/* --- 米セッション終了時刻(JST)。fetch_report.py の DST 判定と同等 ---
+   レギュラー終値16:00 ET=夏05/冬06 JST ／ アフター終了20:00 ET=夏09/冬10 JST（前週末用） --- */
 function firstSundayUTC(y,mo){ const dow=new Date(Date.UTC(y,mo,1)).getUTCDay(); return 1+((7-dow)%7); }
 function usDst(y,mo,da){
   const cur=Date.UTC(y,mo,da);
@@ -469,16 +470,17 @@ function usDst(y,mo,da){
   const nov=Date.UTC(y,10, firstSundayUTC(y,10)); // 11月第1日曜
   return cur>=mar && cur<nov;
 }
-function usCloseHourJst(y,mo,da){
+function usCloseHourJst(y,mo,da,afterHours){
   const prev=jstParts(jstMs(y,mo,da,0,0)-86400000); // 前日（米セッション当日）
-  return usDst(prev.y,prev.mo,prev.da) ? 9 : 10;
+  const edt=usDst(prev.y,prev.mo,prev.da);
+  return afterHours ? (edt?9:10) : (edt?5:6);
 }
 function resolvePreset(key, nowMs){
   let p=jstParts(nowMs);
   for(let i=0;i<14;i++){
     let cand, ok;
     if(key==='jp_close'){ cand=jstMs(p.y,p.mo,p.da,15,30); ok=(p.dow>=1 && p.dow<=5); } // 月〜金
-    else { const hr=usCloseHourJst(p.y,p.mo,p.da); cand=jstMs(p.y,p.mo,p.da,hr,0);
+    else { const hr=usCloseHourJst(p.y,p.mo,p.da, key==='weekend'); cand=jstMs(p.y,p.mo,p.da,hr,0);
            ok = key==='us_close' ? (p.dow>=2 && p.dow<=6) : (p.dow===6); } // 火〜土 / 土のみ
     if(ok && cand<=nowMs) return {baselineMs:cand, label:PRESETS[key]};
     p=jstParts(jstMs(p.y,p.mo,p.da,12,0)-86400000);
